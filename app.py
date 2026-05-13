@@ -63,6 +63,7 @@ def score_kuv(kuv):
 
 
 def score_kgv(kgv):
+    if kgv is None or kgv <= 0: return 0.0, "Verlust erwartet"
     if kgv <= 10:    return 10.0, "Sehr gut"
     elif kgv <= 15:  return 10 - 0.4 * (kgv - 10), "Gut"
     elif kgv <= 20:  return 8 - 0.6 * (kgv - 15), "Okay"
@@ -114,14 +115,16 @@ def calculate_target_price(market_cap, shares, price_raw,
         out["current_kgv_real"] = round(raw_kgv, 1)
         out["eff_kgv"] = round(eff, 1)
         out["kgv_note"] = note
-    elif earnings_2029 and (not net_income or net_income <= 0):
-        # Verlustunternehmen: konservatives Einstiegs-KGV von 30 annehmen
+    elif earnings_2029 and earnings_2029 > 0 and (not net_income or net_income <= 0):
+        # Heute Verlust, aber 2029 profitabel: konservatives KGV von 30 annehmen
         eff = 30.0
         tp_kgv = (eff * earnings_2029) / shares
         out["tp_kgv"] = round(tp_kgv, 2)
         out["current_kgv_real"] = None
         out["eff_kgv"] = eff
         out["kgv_note"] = "Kein aktueller Gewinn – KGV 30× für 2029 angenommen (konservativ)"
+    elif earnings_2029 and earnings_2029 <= 0:
+        out["kgv_note"] = "Verlust in 2029 erwartet – KGV-Kursziel nicht berechenbar"
 
     # ── KUV-Methode ──────────────────────────────────────────────────────────
     if current_revenue and current_revenue > 0 and rev_2029:
@@ -183,7 +186,7 @@ def fetch_stock_data(symbol):
     earnings_2029 = (eps_2027 * shares * factor) if (eps_2027 and shares) else None
 
     kuv_2029 = market_cap / rev_2029 if rev_2029 else None
-    kgv_2029 = market_cap / earnings_2029 if earnings_2029 else None
+    kgv_2029 = market_cap / earnings_2029 if (earnings_2029 and earnings_2029 > 0) else None
 
     kuv_score, kuv_label = (None, None)
     kgv_score, kgv_label = (None, None)
