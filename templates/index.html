@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Aktienbewerter 2029</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -227,7 +229,16 @@
       font-size: 0.95rem; font-weight: 800; white-space: nowrap;
     }
 
-    .chart-container { position: relative; height: 110px; }
+    .chart-container { position: relative; height: 220px; margin-top: 6px; }
+    .chart-controls {
+      display: flex; justify-content: flex-end; margin-bottom: 4px;
+    }
+    .zoom-reset-btn {
+      font-size: 0.68rem; color: #aaa; background: #f7f8fc;
+      border: 1px solid #e4e8f0; border-radius: 6px;
+      padding: 3px 8px; cursor: pointer; transition: background 0.2s;
+    }
+    .zoom-reset-btn:hover { background: #e8eaf6; color: #4f8ef7; }
 
     .remove-btn {
       position: absolute; top: 14px; right: 14px;
@@ -523,10 +534,13 @@
             </div>
             ${upside != null ? `<div class="wl-upside" style="color:${uColor};background:${uBg}">${uSign}${upside}%</div>` : ''}
           </div>
+          <div class="chart-controls">
+            <button class="zoom-reset-btn" onclick="event.stopPropagation();resetZoom('${sym}')">⟳ Zoom zurücksetzen</button>
+          </div>
           <div class="chart-container">
             <canvas id="chart-${sym}"></canvas>
           </div>
-          <div class="click-hint">Klicken für Details</div>
+          <div class="click-hint">Klicken für Details · Mausrad = Zoom · Ziehen = Verschieben</div>
         </div>`;
     }).join("");
 
@@ -535,6 +549,14 @@
       if (!history.length) return;
       const ctx = document.getElementById(`chart-${sym}`);
       if (!ctx) return;
+
+      // Dynamische Y-Achse: nur relevanten Bereich anzeigen
+      const scores = history.map(h => h.total_score).filter(v => v != null);
+      const upsides = history.map(h => h.upside_pct).filter(v => v != null);
+      const scoreMin = scores.length ? Math.max(0, Math.min(...scores) - 0.5) : 0;
+      const scoreMax = scores.length ? Math.min(10, Math.max(...scores) + 0.5) : 10;
+      const upsideMin = upsides.length ? Math.min(...upsides) - 5 : -20;
+      const upsideMax = upsides.length ? Math.max(...upsides) + 5 : 100;
 
       const chart = new Chart(ctx, {
         type: "line",
@@ -545,50 +567,80 @@
               label: "Score",
               data: history.map(h => h.total_score),
               borderColor: "#4f8ef7",
-              backgroundColor: "rgba(79,142,247,0.07)",
-              borderWidth: 2,
-              pointRadius: history.length < 8 ? 4 : 2,
+              backgroundColor: "rgba(79,142,247,0.08)",
+              borderWidth: 2.5,
+              pointRadius: history.length < 15 ? 5 : 3,
+              pointHoverRadius: 7,
               tension: 0.35, fill: true, yAxisID: "y",
             },
             {
               label: "Potenzial %",
               data: history.map(h => h.upside_pct),
               borderColor: "#00a844",
-              borderWidth: 1.5,
-              borderDash: [4, 3],
-              pointRadius: 0,
-              tension: 0.35, yAxisID: "y2",
+              backgroundColor: "rgba(0,168,68,0.05)",
+              borderWidth: 2,
+              pointRadius: history.length < 15 ? 4 : 2,
+              pointHoverRadius: 6,
+              tension: 0.35, fill: true, yAxisID: "y2",
             }
           ]
         },
         options: {
           responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
           plugins: {
-            legend: { labels: { color: "#aaa", font: { size: 10 }, boxWidth: 12 } },
+            legend: {
+              labels: { color: "#888", font: { size: 11 }, boxWidth: 14, padding: 12 }
+            },
             tooltip: {
+              backgroundColor: "#fff",
+              borderColor: "#e4e8f0",
+              borderWidth: 1,
+              titleColor: "#1a1d2e",
+              bodyColor: "#555",
+              padding: 10,
               callbacks: {
                 label: c => c.dataset.yAxisID === "y2"
                   ? ` Potenzial: ${c.parsed.y}%`
                   : ` Score: ${c.parsed.y}/10`
               }
+            },
+            zoom: {
+              pan: { enabled: true, mode: "x" },
+              zoom: {
+                wheel: { enabled: true },
+                pinch: { enabled: true },
+                mode: "x",
+              }
             }
           },
           scales: {
-            x: { ticks: { color: "#bbb", font: { size: 9 }, maxTicksLimit: 5 }, grid: { color: "#f0f0f0" } },
+            x: {
+              ticks: { color: "#bbb", font: { size: 10 }, maxTicksLimit: 6 },
+              grid: { color: "#f0f2f7" }
+            },
             y: {
-              min: 0, max: 10, position: "left",
-              ticks: { color: "#4f8ef7", font: { size: 9 }, stepSize: 2 },
-              grid: { color: "#f0f0f0" }
+              min: scoreMin, max: scoreMax, position: "left",
+              ticks: {
+                color: "#4f8ef7", font: { size: 10 },
+                callback: v => v.toFixed(1) + "/10"
+              },
+              grid: { color: "#f0f2f7" }
             },
             y2: {
-              position: "right",
-              ticks: { color: "#00a844", font: { size: 9 }, callback: v => v + "%" },
+              min: upsideMin, max: upsideMax, position: "right",
+              ticks: {
+                color: "#00a844", font: { size: 10 },
+                callback: v => v.toFixed(0) + "%"
+              },
               grid: { drawOnChartArea: false }
             }
           }
         }
       });
       window._wlCharts.push(chart);
+      if (!window._wlChartMap) window._wlChartMap = {};
+      window._wlChartMap[sym] = chart;
     });
   }
 
@@ -605,6 +657,12 @@
     }
     btn.disabled = false;
     btn.textContent = "🔄 Alle aktualisieren";
+  }
+
+  function resetZoom(sym) {
+    if (window._wlChartMap && window._wlChartMap[sym]) {
+      window._wlChartMap[sym].resetZoom();
+    }
   }
 
   loadWatchlist();
