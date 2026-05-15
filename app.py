@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, jsonify
 import yfinance as yf
 import pandas as pd
 import os
-from datetime import date
+from datetime import date, datetime
 from supabase import create_client, Client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
@@ -311,33 +311,45 @@ def _refresh_portfolio_generic(score_threshold_fn, buy_key, positions_table,
     today = str(date.today())
     errors = []
 
-    fresh = {}
-    for symbol in wl:
-        try:
-            d = fetch_stock_data(symbol)
-            if "error" not in d:
-                fresh[symbol] = d
-        except Exception as e:
-            errors.append(f"{symbol}: {e}")
-
-    # Auto-Buy / Auto-Short
-    for symbol, d in fresh.items():
-        score = d.get("total_score")
-        price = d.get("price_raw")
-        if score is not None and score_threshold_fn(score) and price and symbol not in positions:
+    # Auto-Buy auf Basis gespeicherter Watchlist-Scores (zuverlässig, kein Fetch-Fehler möglich)
+    buy_ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    for symbol, wl_entry in wl.items():
+        latest = wl_entry.get("latest") or {}
+        score = latest.get("total_score")
+        price = latest.get("price_raw")
+        already_active = positions.get(symbol, {}).get("status") == "active"
+        if score is not None and score_threshold_fn(score) and price and not already_active:
             shares = round(1000 / price, 6)
-            row = {"symbol": symbol, "name": d.get("name", symbol),
-                   buy_key: today, "short_price" if short_mode else "buy_price": round(price, 4),
+            row = {"symbol": symbol, "name": wl_entry.get("name", symbol),
+                   buy_key: buy_ts, "short_price" if short_mode else "buy_price": round(price, 4),
                    "shares": shares, "investment": 1000,
-                   "currency": d.get("currency", "USD"), "status": "active"}
-            db.table(positions_table).upsert(row).execute()
+                   "currency": latest.get("currency", "USD"), "status": "active"}
+            # Alte Position + alte History löschen damit Performance sauber von Kaufzeitpunkt startet
+            db.table(history_table).delete().eq("symbol", symbol).execute()
+            db.table(positions_table).delete().eq("symbol", symbol).execute()
+            db.table(positions_table).insert(row).execute()
             positions[symbol] = {
-                "name": d.get("name", symbol), "buy_date": today,
+                "name": wl_entry.get("name", symbol), "buy_date": buy_ts,
                 "buy_price": round(price, 4), "shares": shares,
-                "investment": 1000, "currency": d.get("currency", "USD"),
+                "investment": 1000, "currency": latest.get("currency", "USD"),
                 "status": "active", "close_date": None,
                 "close_price": None, "close_pct": None, "daily_history": [],
             }
+
+    # Frische Kurse nur für aktive Positionen laden
+    active_symbols = [sym for sym, pos in positions.items() if pos["status"] == "active"]
+    fresh = {}
+    def fetch_one(sym):
+        try:
+            d = fetch_stock_data(sym)
+            return sym, d if "error" not in d else None
+        except Exception as e:
+            errors.append(f"{sym}: {e}")
+            return sym, None
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        for sym, d in ex.map(fetch_one, active_symbols):
+            if d:
+                fresh[sym] = d
 
     total_value = total_invested = 0
 
