@@ -843,8 +843,17 @@
   }
 
   async function loadShortPortfolio() {
-    const res = await fetch("/short-portfolio");
-    renderShortPortfolio(await res.json());
+    try {
+      const res = await fetch("/short-portfolio");
+      const data = await res.json();
+      if (data.error) {
+        document.getElementById("short-portfolio-content").innerHTML = `<div class="error">⚠️ ${data.error}</div>`;
+        return;
+      }
+      renderShortPortfolio(data);
+    } catch (e) {
+      document.getElementById("short-portfolio-content").innerHTML = `<div class="error">⚠️ ${e.message}</div>`;
+    }
   }
 
   function renderShortPortfolio(port) {
@@ -958,8 +967,17 @@
   }
 
   async function loadPortfolio() {
-    const res = await fetch("/portfolio");
-    renderPortfolio(await res.json());
+    try {
+      const res = await fetch("/portfolio");
+      const data = await res.json();
+      if (data.error) {
+        document.getElementById("portfolio-content").innerHTML = `<div class="error">⚠️ ${data.error}</div>`;
+        return;
+      }
+      renderPortfolio(data);
+    } catch (e) {
+      document.getElementById("portfolio-content").innerHTML = `<div class="error">⚠️ ${e.message}</div>`;
+    }
   }
 
   function renderPortfolio(port) {
