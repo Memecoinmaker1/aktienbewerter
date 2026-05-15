@@ -834,6 +834,10 @@
     try {
       const res = await fetch("/short-portfolio/refresh");
       const data = await res.json();
+      if (data.error) {
+        document.getElementById("short-portfolio-content").innerHTML = `<div class="error">⚠️ ${data.error}</div>`;
+        return;
+      }
       renderShortPortfolio(data.data);
     } catch (e) {
       document.getElementById("short-portfolio-content").innerHTML =
@@ -955,6 +959,10 @@
     try {
       const res = await fetch("/portfolio/refresh");
       const data = await res.json();
+      if (data.error) {
+        document.getElementById("portfolio-content").innerHTML = `<div class="error">⚠️ ${data.error}</div>`;
+        return;
+      }
       renderPortfolio(data.data);
       if (data.errors && data.errors.length)
         console.warn("Portfolio-Fehler:", data.errors);
