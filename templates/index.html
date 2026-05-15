@@ -768,8 +768,9 @@
 
   async function startScan() {
     const btn = document.getElementById("scan-btn");
-    const min = document.getElementById("scan-min").value;
-    const max = document.getElementById("scan-max").value;
+    let min = parseFloat(document.getElementById("scan-min").value);
+    let max = parseFloat(document.getElementById("scan-max").value);
+    if (min > max) { [min, max] = [max, min]; }
     const box = document.getElementById("scan-results");
 
     btn.disabled = true;
