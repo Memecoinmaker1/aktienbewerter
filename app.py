@@ -7,6 +7,7 @@ from datetime import date
 
 app = Flask(__name__)
 WATCHLIST_FILE = "watchlist.json"
+PORTFOLIO_FILE = "portfolio.json"
 
 
 # ── Persistenz ────────────────────────────────────────────────────────────────
@@ -20,6 +21,18 @@ def load_watchlist():
 
 def save_watchlist(data):
     with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load_portfolio():
+    if os.path.exists(PORTFOLIO_FILE):
+        with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"positions": {}, "portfolio_history": []}
+
+
+def save_portfolio(data):
+    with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
@@ -333,6 +346,118 @@ def refresh_watchlist():
 
     save_watchlist(watchlist)
     return jsonify({"ok": True, "errors": errors, "data": watchlist})
+
+
+@app.route("/portfolio")
+def get_portfolio():
+    return jsonify(load_portfolio())
+
+
+@app.route("/portfolio/refresh")
+def refresh_portfolio():
+    watchlist = load_watchlist()
+    portfolio = load_portfolio()
+    today = str(date.today())
+    positions = portfolio.setdefault("positions", {})
+    port_history = portfolio.setdefault("portfolio_history", [])
+    errors = []
+
+    # Frische Daten für alle Watchlist-Werte holen
+    fresh = {}
+    for symbol in watchlist:
+        try:
+            d = fetch_stock_data(symbol)
+            if "error" not in d:
+                fresh[symbol] = d
+        except Exception as e:
+            errors.append(f"{symbol}: {e}")
+
+    # Auto-Buy: Score > 8 und noch nicht im Portfolio
+    for symbol, d in fresh.items():
+        score = d.get("total_score")
+        price = d.get("price_raw")
+        if score and score > 8 and price and symbol not in positions:
+            shares = round(1000 / price, 6)
+            positions[symbol] = {
+                "name": d.get("name", symbol),
+                "buy_date": today,
+                "buy_price": round(price, 4),
+                "shares": shares,
+                "investment": 1000,
+                "currency": d.get("currency", "USD"),
+                "status": "active",
+                "sell_date": None,
+                "sell_price": None,
+                "daily_history": [],
+            }
+
+    # Alle aktiven Positionen updaten
+    total_value = 0
+    total_invested = 0
+
+    for symbol, pos in positions.items():
+        if pos["status"] != "active":
+            continue
+        d = fresh.get(symbol)
+        if not d:
+            continue
+        price = d.get("price_raw")
+        score = d.get("total_score")
+        if not price:
+            continue
+
+        current_value = round(pos["shares"] * price, 2)
+        history = pos.setdefault("daily_history", [])
+
+        # Vortagespreis ermitteln
+        prev_entries = [h for h in history if h["date"] != today]
+        prev_price = prev_entries[-1]["price"] if prev_entries else pos["buy_price"]
+        daily_pct = round((price - prev_price) / prev_price * 100, 2)
+        total_pct = round((price - pos["buy_price"]) / pos["buy_price"] * 100, 2)
+
+        entry = {
+            "date": today,
+            "price": round(price, 4),
+            "value": current_value,
+            "score": score,
+            "daily_pct": daily_pct,
+            "total_pct": total_pct,
+        }
+        idx = next((i for i, h in enumerate(history) if h["date"] == today), None)
+        if idx is not None:
+            history[idx] = entry
+        else:
+            history.append(entry)
+
+        # Auto-Sell: Score < 8
+        if score is not None and score < 8:
+            pos["status"] = "sold"
+            pos["sell_date"] = today
+            pos["sell_price"] = round(price, 4)
+            pos["sell_pct"] = total_pct
+        else:
+            total_value += current_value
+            total_invested += pos["investment"]
+
+    # Portfolio-History
+    prev_port = next((h for h in reversed(port_history) if h["date"] != today), None)
+    prev_total = prev_port["total_value"] if prev_port else total_invested or 1
+    port_daily_pct = round((total_value - prev_total) / prev_total * 100, 2) if prev_total else 0
+
+    port_entry = {
+        "date": today,
+        "total_value": round(total_value, 2),
+        "total_invested": total_invested,
+        "daily_pct": port_daily_pct,
+    }
+    idx = next((i for i, h in enumerate(port_history) if h["date"] == today), None)
+    if idx is not None:
+        port_history[idx] = port_entry
+    else:
+        port_history.append(port_entry)
+
+    save_portfolio(portfolio)
+    return jsonify({"ok": True, "errors": errors, "data": portfolio})
 
 
 if __name__ == "__main__":
