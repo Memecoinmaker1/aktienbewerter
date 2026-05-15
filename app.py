@@ -461,38 +461,50 @@ def refresh_watchlist():
 
 @app.route("/portfolio")
 def get_portfolio():
-    return jsonify(db_load_portfolio())
+    try:
+        return jsonify(db_load_portfolio())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/portfolio/refresh")
 def refresh_portfolio():
-    result = _refresh_portfolio_generic(
-        score_threshold_fn=lambda s: s > 8,
-        buy_key="buy_date",
-        positions_table="portfolio_positions",
-        history_table="portfolio_pos_history",
-        summary_table="portfolio_history",
-        short_mode=False,
-    )
-    return jsonify(result)
+    try:
+        result = _refresh_portfolio_generic(
+            score_threshold_fn=lambda s: s > 8,
+            buy_key="buy_date",
+            positions_table="portfolio_positions",
+            history_table="portfolio_pos_history",
+            summary_table="portfolio_history",
+            short_mode=False,
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/short-portfolio")
 def get_short_portfolio():
-    return jsonify(db_load_portfolio("short_positions", "short_pos_history", "short_portfolio_history"))
+    try:
+        return jsonify(db_load_portfolio("short_positions", "short_pos_history", "short_portfolio_history"))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/short-portfolio/refresh")
 def refresh_short_portfolio():
-    result = _refresh_portfolio_generic(
-        score_threshold_fn=lambda s: s <= 2,
-        buy_key="short_date",
-        positions_table="short_positions",
-        history_table="short_pos_history",
-        summary_table="short_portfolio_history",
-        short_mode=True,
-    )
-    return jsonify(result)
+    try:
+        result = _refresh_portfolio_generic(
+            score_threshold_fn=lambda s: s <= 2,
+            buy_key="short_date",
+            positions_table="short_positions",
+            history_table="short_pos_history",
+            summary_table="short_portfolio_history",
+            short_mode=True,
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/scan")
