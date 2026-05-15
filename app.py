@@ -366,7 +366,8 @@ def _refresh_portfolio_generic(score_threshold_fn, buy_key, positions_table,
             daily_pct = round((price - prev_price) / prev_price * 100, 2)
             total_pct = round((price - buy_price) / buy_price * 100, 2)
 
-        db.table(history_table).upsert({
+        db.table(history_table).delete().eq("symbol", symbol).eq("date", today).execute()
+        db.table(history_table).insert({
             "symbol": symbol, "date": today, "price": round(price, 4),
             "value": current_value, "score": score,
             "daily_pct": daily_pct, "total_pct": total_pct,
@@ -393,7 +394,8 @@ def _refresh_portfolio_generic(score_threshold_fn, buy_key, positions_table,
     prev_total = prev_port["total_value"] if prev_port and prev_port["date"] != today else (total_invested or 1)
     daily_pct = round((total_value - prev_total) / prev_total * 100, 2) if prev_total else 0
 
-    db.table(summary_table).upsert({
+    db.table(summary_table).delete().eq("date", today).execute()
+    db.table(summary_table).insert({
         "date": today, "total_value": round(total_value, 2),
         "total_invested": total_invested, "daily_pct": daily_pct,
     }).execute()
