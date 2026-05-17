@@ -579,8 +579,11 @@
   }
 
   async function removeFromWatchlist(symbol) {
+    if (!confirm(`${symbol} aus Watchlist und Portfolios entfernen?`)) return;
     await fetch(`/watchlist/remove/${symbol}`, { method: "DELETE" });
     loadWatchlist();
+    loadPortfolio();
+    loadShortPortfolio();
   }
 
   async function loadWatchlist() {
@@ -899,7 +902,7 @@
       const dp = lat.daily_pct ?? 0, tp = lat.total_pct ?? 0;
       return `<tr>
         <td><strong>${p.name}</strong><br><span style="color:#aaa;font-size:0.75rem">${sym}</span></td>
-        <td>${p.buy_date}</td>
+        <td style="font-size:0.8rem">${p.buy_date}</td>
         <td>$${p.buy_price.toFixed(2)}</td>
         <td>$${(lat.price || p.buy_price).toFixed(2)}</td>
         <td><span class="badge" style="color:${pColor(dp)};background:${pBg(dp)}">${sign(dp)}${dp.toFixed(2)}%</span></td>
@@ -1044,7 +1047,7 @@
       return `
         <tr>
           <td><strong>${p.name}</strong><br><span style="color:#aaa;font-size:0.75rem">${sym}</span></td>
-          <td>${p.buy_date}</td>
+          <td style="font-size:0.8rem">${p.buy_date}</td>
           <td>$${p.buy_price.toFixed(2)}</td>
           <td>$${(lat.price || p.buy_price).toFixed(2)}</td>
           <td><span class="badge" style="color:${pColor(dp)};background:${pBg(dp)}">${sign(dp)}${dp.toFixed(2)}%</span></td>

@@ -451,7 +451,15 @@ def add_to_watchlist():
 
 @app.route("/watchlist/remove/<symbol>", methods=["DELETE"])
 def remove_from_watchlist(symbol):
+    # Watchlist + History
+    db.table("watchlist_history").delete().eq("symbol", symbol).execute()
     db.table("watchlist").delete().eq("symbol", symbol).execute()
+    # Long-Portfolio
+    db.table("portfolio_pos_history").delete().eq("symbol", symbol).execute()
+    db.table("portfolio_positions").delete().eq("symbol", symbol).execute()
+    # Short-Portfolio
+    db.table("short_pos_history").delete().eq("symbol", symbol).execute()
+    db.table("short_positions").delete().eq("symbol", symbol).execute()
     return jsonify({"ok": True})
 
 
