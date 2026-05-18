@@ -644,10 +644,12 @@
           </div>
           <div class="chart-controls">
             <button class="zoom-reset-btn" onclick="event.stopPropagation();resetZoom('${sym}')">⟳ Zoom zurücksetzen</button>
+            <button class="zoom-reset-btn" style="margin-left:8px;background:#f0f4ff;color:#4f8ef7;border:1px solid #c8d8ff" onclick="event.stopPropagation();toggleEstimates('${sym}')">📊 Prognose-Verlauf</button>
           </div>
           <div class="chart-container">
             <canvas id="chart-${sym}"></canvas>
           </div>
+          <div id="estimates-${sym}" style="display:none;margin-top:14px"></div>
           <div class="click-hint">Klicken für Details · Mausrad = Zoom · Ziehen = Verschieben</div>
         </div>`;
     }).join("");
@@ -1157,6 +1159,202 @@
         });
       }
     }
+  }
+
+  loadWatchlist();
+  loadPortfolio();
+  loadShortPortfolio();
+
+  // ── Prognose-Verlauf ──────────────────────────────────────────────────────
+  const _estCharts = {};
+
+  async function toggleEstimates(sym) {
+    const box = document.getElementById(`estimates-${sym}`);
+    if (!box) return;
+    if (box.style.display !== "none") { box.style.display = "none"; return; }
+    box.style.display = "block";
+    if (box.dataset.loaded) return;
+    box.innerHTML = `<div style="text-align:center;color:#aaa;padding:12px">Lade Prognosen …</div>`;
+
+    try {
+      const res  = await fetch(`/estimates/${sym}`);
+      const data = await res.json();
+      if (data.error) { box.innerHTML = `<div class="error">⚠️ ${data.error}</div>`; return; }
+      if (!data.length) {
+        box.innerHTML = `<div style="color:#aaa;font-size:0.85rem;text-align:center;padding:12px">Noch keine gespeicherten Prognosen.<br>Nach dem nächsten Watchlist-Refresh verfügbar.</div>`;
+        return;
+      }
+      renderEstimates(sym, data, box);
+      box.dataset.loaded = "1";
+    } catch(e) {
+      box.innerHTML = `<div class="error">⚠️ ${e.message}</div>`;
+    }
+  }
+
+  function renderEstimates(sym, data, box) {
+    // Gruppieren nach period_type
+    const annual = data.filter(d => d.period_type === "annual");
+    const quarterly = data.filter(d => d.period_type === "quarterly");
+
+    // Alle einzigartigen Perioden
+    const annualPeriods = [...new Set(annual.map(d => d.period))].sort();
+    const quarterlyPeriods = [...new Set(quarterly.map(d => d.period))].sort();
+
+    // Änderungslog berechnen
+    function buildChangelog(rows) {
+      const byPeriod = {};
+      rows.forEach(r => {
+        if (!byPeriod[r.period]) byPeriod[r.period] = [];
+        byPeriod[r.period].push(r);
+      });
+      const log = [];
+      for (const [period, entries] of Object.entries(byPeriod)) {
+        entries.sort((a,b) => a.recorded_date.localeCompare(b.recorded_date));
+        for (let i = 1; i < entries.length; i++) {
+          const prev = entries[i-1], curr = entries[i];
+          if (curr.revenue_est != null && prev.revenue_est != null) {
+            const pct = ((curr.revenue_est - prev.revenue_est) / Math.abs(prev.revenue_est) * 100);
+            log.push({ date: curr.recorded_date, period, type: "Umsatz", old: prev.revenue_est, new: curr.revenue_est, pct });
+          }
+          if (curr.eps_est != null && prev.eps_est != null) {
+            const pct = ((curr.eps_est - prev.eps_est) / Math.abs(prev.eps_est) * 100);
+            log.push({ date: curr.recorded_date, period, type: "EPS", old: prev.eps_est, new: curr.eps_est, pct });
+          }
+        }
+      }
+      return log.sort((a,b) => b.date.localeCompare(a.date));
+    }
+
+    const annualLog     = buildChangelog(annual);
+    const quarterlyLog  = buildChangelog(quarterly);
+
+    // Farben für Perioden
+    const COLORS = ["#4f8ef7","#f7914f","#4fc77e","#c74f4f","#a04ff7","#f7d44f"];
+
+    function fmt(v, type) {
+      if (v == null) return "—";
+      if (type === "Umsatz") {
+        if (Math.abs(v) >= 1e9) return (v/1e9).toFixed(2) + " Mrd";
+        if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + " Mio";
+        return v.toFixed(0);
+      }
+      return v.toFixed(2);
+    }
+
+    function buildSection(title, rows, periods, log, canvasId, canvasId2) {
+      if (!rows.length) return "";
+      // Chart-Daten: für jede Periode letzte N Einträge
+      const byPeriod = {};
+      rows.forEach(r => { if (!byPeriod[r.period]) byPeriod[r.period] = []; byPeriod[r.period].push(r); });
+      // Alle Daten als Labels (alle Daten mit mind. einem Eintrag)
+      const allDates = [...new Set(rows.map(r => r.recorded_date))].sort();
+
+      const changelogHtml = log.length ? `
+        <div style="margin-top:12px;font-size:0.8rem">
+          <div style="color:#999;margin-bottom:6px;font-weight:600">Änderungen</div>
+          <div style="max-height:180px;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr style="color:#aaa;font-size:0.75rem">
+                <th style="text-align:left;padding:3px 6px">Datum</th>
+                <th style="text-align:left;padding:3px 6px">Periode</th>
+                <th style="text-align:left;padding:3px 6px">Typ</th>
+                <th style="text-align:right;padding:3px 6px">Alt</th>
+                <th style="text-align:right;padding:3px 6px">Neu</th>
+                <th style="text-align:right;padding:3px 6px">Änderung</th>
+              </tr></thead>
+              <tbody>
+                ${log.map(c => `
+                  <tr style="border-top:1px solid #f0f2f7">
+                    <td style="padding:3px 6px;color:#888">${c.date}</td>
+                    <td style="padding:3px 6px;font-weight:600">${c.period}</td>
+                    <td style="padding:3px 6px;color:#666">${c.type}</td>
+                    <td style="padding:3px 6px;text-align:right;color:#aaa">${fmt(c.old, c.type)}</td>
+                    <td style="padding:3px 6px;text-align:right">${fmt(c.new, c.type)}</td>
+                    <td style="padding:3px 6px;text-align:right;font-weight:700;color:${c.pct>=0?"#00a844":"#c0392b"}">
+                      ${c.pct>=0?"+":""}${c.pct.toFixed(1)}%
+                    </td>
+                  </tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>` : `<div style="color:#ccc;font-size:0.8rem;margin-top:8px">Noch keine Änderungen – Prognosen waren bisher konstant.</div>`;
+
+      return `
+        <div style="margin-bottom:16px">
+          <div style="font-size:0.82rem;font-weight:700;color:#555;margin-bottom:8px">${title}</div>
+          <div style="position:relative;height:160px"><canvas id="${canvasId}"></canvas></div>
+          <div style="position:relative;height:130px;margin-top:8px"><canvas id="${canvasId2}"></canvas></div>
+          ${changelogHtml}
+        </div>`;
+    }
+
+    box.innerHTML = `
+      <div style="border-top:1px solid #eee;padding-top:14px">
+        <div style="font-size:0.85rem;font-weight:700;color:#1a1d2e;margin-bottom:12px">📊 Prognose-Verlauf Analysten</div>
+        ${buildSection("Jährliche Prognosen", annual, annualPeriods, annualLog, `ec-a-rev-${sym}`, `ec-a-eps-${sym}`)}
+        ${buildSection("Quartalsprognosen", quarterly, quarterlyPeriods, quarterlyLog, `ec-q-rev-${sym}`, `ec-q-eps-${sym}`)}
+      </div>`;
+
+    // Charts zeichnen
+    function drawCharts(rows, periods, revId, epsId) {
+      if (!rows.length) return;
+      const byPeriod = {};
+      rows.forEach(r => { if (!byPeriod[r.period]) byPeriod[r.period] = []; byPeriod[r.period].push(r); });
+      const allDates = [...new Set(rows.map(r => r.recorded_date))].sort();
+
+      function makeDatasets(key, label) {
+        return periods.map((p, i) => {
+          const byDate = {};
+          (byPeriod[p] || []).forEach(r => { byDate[r.recorded_date] = r[key]; });
+          return {
+            label: p,
+            data: allDates.map(d => byDate[d] != null ? byDate[d] : null),
+            backgroundColor: COLORS[i % COLORS.length] + "cc",
+            borderColor: COLORS[i % COLORS.length],
+            borderWidth: 1,
+            spanGaps: true,
+          };
+        });
+      }
+
+      const commonOpts = (title, formatter) => ({
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "top", labels: { font: { size: 10 }, boxWidth: 12 } },
+          title: { display: true, text: title, font: { size: 11 }, color: "#777" },
+          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${formatter(ctx.raw)}` } }
+        },
+        scales: {
+          x: { ticks: { font: { size: 9 } }, grid: { color: "#f0f2f7" } },
+          y: { ticks: { font: { size: 9 }, callback: formatter }, grid: { color: "#f0f2f7" } }
+        }
+      });
+
+      const fmtRev = v => v == null ? "" : Math.abs(v) >= 1e9 ? (v/1e9).toFixed(1)+"Mrd" : (v/1e6).toFixed(0)+"Mio";
+      const fmtEps = v => v == null ? "" : v.toFixed(2);
+
+      [revId, epsId].forEach(id => { if (_estCharts[id]) { _estCharts[id].destroy(); delete _estCharts[id]; } });
+
+      const revCtx = document.getElementById(revId);
+      const epsCtx = document.getElementById(epsId);
+      if (revCtx) {
+        _estCharts[revId] = new Chart(revCtx, {
+          type: "bar",
+          data: { labels: allDates, datasets: makeDatasets("revenue_est", "Umsatz") },
+          options: commonOpts("Umsatzprognose (Analysten-Konsens)", fmtRev)
+        });
+      }
+      if (epsCtx) {
+        _estCharts[epsId] = new Chart(epsCtx, {
+          type: "bar",
+          data: { labels: allDates, datasets: makeDatasets("eps_est", "EPS") },
+          options: commonOpts("EPS-Prognose (Analysten-Konsens)", fmtEps)
+        });
+      }
+    }
+
+    drawCharts(annual,    annualPeriods,    `ec-a-rev-${sym}`, `ec-a-eps-${sym}`);
+    drawCharts(quarterly, quarterlyPeriods, `ec-q-rev-${sym}`, `ec-q-eps-${sym}`);
   }
 
   loadWatchlist();

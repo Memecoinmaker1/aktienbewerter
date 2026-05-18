@@ -264,6 +264,81 @@ def db_upsert_watchlist_entry(symbol, name, latest_data, today, entry):
     }).execute()
 
 
+# ── Analysten-Prognosen ───────────────────────────────────────────────────────
+
+def _next_quarter(year, q):
+    return (year, q + 1) if q < 4 else (year + 1, 1)
+
+def _safe_val(df, key, col="avg"):
+    try:
+        if df is None or df.empty or key not in df.index: return None
+        v = df.loc[key, col] if col in df.columns else None
+        return float(v) if v is not None and not pd.isna(v) else None
+    except Exception:
+        return None
+
+def fetch_and_save_estimates(symbol):
+    try:
+        t = yf.Ticker(symbol)
+        rev_est  = t.revenue_estimate
+        earn_est = t.earnings_estimate
+        today    = str(date.today())
+        cy = date.today().year
+        cq = (date.today().month - 1) // 3 + 1
+
+        estimates = []
+
+        # Jährliche Schätzungen
+        for key, year in [("0y", cy), ("+1y", cy + 1), ("+2y", cy + 2)]:
+            rev = _safe_val(rev_est,  key)
+            eps = _safe_val(earn_est, key)
+            if rev is not None or eps is not None:
+                estimates.append({"period": str(year), "period_type": "annual",
+                                   "revenue_est": rev, "eps_est": eps})
+
+        # Quartalschätzungen
+        qy, qq = cy, cq
+        for key in ["0q", "+1q", "+2q", "+3q"]:
+            rev = _safe_val(rev_est,  key)
+            eps = _safe_val(earn_est, key)
+            if rev is not None or eps is not None:
+                estimates.append({"period": f"{qy}Q{qq}", "period_type": "quarterly",
+                                   "revenue_est": rev, "eps_est": eps})
+            qy, qq = _next_quarter(qy, qq)
+
+        # Nur speichern wenn sich etwas geändert hat
+        for est in estimates:
+            period = est["period"]
+            ptype  = est["period_type"]
+            rev    = est["revenue_est"]
+            eps    = est["eps_est"]
+
+            last = db.table("analyst_estimates_history").select("revenue_est,eps_est") \
+                .eq("symbol", symbol).eq("period", period).eq("period_type", ptype) \
+                .order("recorded_date", desc=True).limit(1).execute().data
+
+            changed = True
+            if last:
+                lr = float(last[0]["revenue_est"]) if last[0]["revenue_est"] is not None else None
+                le = float(last[0]["eps_est"])     if last[0]["eps_est"]     is not None else None
+                rev_chg = rev is not None and lr is not None and abs(rev - lr) / max(abs(lr), 1) > 0.001
+                eps_chg = eps is not None and le is not None and abs(eps - le) / max(abs(le), 0.01) > 0.001
+                new_val = (rev is not None and lr is None) or (eps is not None and le is None)
+                changed = rev_chg or eps_chg or new_val
+
+            if changed:
+                db.table("analyst_estimates_history") \
+                    .delete().eq("symbol", symbol).eq("period", period) \
+                    .eq("period_type", ptype).eq("recorded_date", today).execute()
+                db.table("analyst_estimates_history").insert({
+                    "symbol": symbol, "recorded_date": today,
+                    "period": period, "period_type": ptype,
+                    "revenue_est": rev, "eps_est": eps,
+                }).execute()
+    except Exception:
+        pass  # Schätzungen nicht kritisch für Watchlist-Refresh
+
+
 # ── Portfolio DB ──────────────────────────────────────────────────────────────
 
 def db_load_portfolio(positions_table="portfolio_positions",
@@ -453,6 +528,7 @@ def add_to_watchlist():
 def remove_from_watchlist(symbol):
     # Watchlist + History
     db.table("watchlist_history").delete().eq("symbol", symbol).execute()
+    db.table("analyst_estimates_history").delete().eq("symbol", symbol).execute()
     db.table("watchlist").delete().eq("symbol", symbol).execute()
     # Long-Portfolio
     db.table("portfolio_pos_history").delete().eq("symbol", symbol).execute()
@@ -476,9 +552,20 @@ def refresh_watchlist():
             entry = {k: result.get(k) for k in
                      ["total_score", "kuv_score", "kgv_score", "tp_combined", "upside_pct"]}
             db_upsert_watchlist_entry(symbol, result.get("name", symbol), result, today, entry)
+            fetch_and_save_estimates(symbol)
         except Exception as e:
             errors.append(f"{symbol}: {str(e)}")
     return jsonify({"ok": True, "errors": errors, "data": db_load_watchlist()})
+
+
+@app.route("/estimates/<symbol>")
+def get_estimates(symbol):
+    try:
+        data = db.table("analyst_estimates_history").select("*") \
+            .eq("symbol", symbol).order("recorded_date").execute().data
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/portfolio")
